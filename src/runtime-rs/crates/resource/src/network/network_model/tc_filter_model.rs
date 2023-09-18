@@ -65,6 +65,7 @@ impl NetworkModel for TcFilterModel {
             // get protocol with network byte order
             .protocol(0x0003_u16.to_be())
             .redirect(virt_index)
+            .unwrap()
             .execute()
             .await
             .context("add redirect for tap")?;
@@ -76,6 +77,7 @@ impl NetworkModel for TcFilterModel {
             // get protocol with network byte order
             .protocol(0x0003_u16.to_be())
             .redirect(tap_index)
+            .unwrap()
             .execute()
             .await
             .context("add redirect for virt")?;

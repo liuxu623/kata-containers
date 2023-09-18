@@ -4,17 +4,22 @@
 //
 
 use anyhow::{anyhow, Context, Result};
-use futures::{future, StreamExt, TryStreamExt};
+use futures::{future, TryStreamExt};
 use ipnetwork::{IpNetwork, Ipv4Network, Ipv6Network};
 use nix::errno::Errno;
 use protobuf::RepeatedField;
 use protocols::types::{ARPNeighbor, IPAddress, IPFamily, Interface, Route};
-use rtnetlink::{new_connection, packet, IpVersion};
+use rtnetlink::{new_connection, IpVersion};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::ops::Deref;
 use std::str::{self, FromStr};
+use netlink_packet_route::{
+    AddressMessage, link, LinkMessage, route,
+    AF_INET6, IFF_UP, NDA_UNSPEC, RT_TABLE_MAIN,
+    RTN_UNICAST, RTPROT_BOOT, RTPROT_KERNEL,
+};
 
 /// Search criteria to use when looking for a link in `find_link`.
 pub enum LinkFilter<'a> {
@@ -112,8 +117,8 @@ impl Handle {
     }
 
     pub async fn update_routes<I>(&mut self, list: I) -> Result<()>
-    where
-        I: IntoIterator<Item = Route>,
+        where
+            I: IntoIterator<Item=Route>,
     {
         let old_routes = self
             .query_routes(None)
@@ -164,7 +169,7 @@ impl Handle {
         let request = self.handle.link().get();
 
         let filtered = match filter {
-            LinkFilter::Name(name) => request.set_name_filter(name.to_owned()),
+            LinkFilter::Name(name) => request.match_name(name.to_owned()),
             LinkFilter::Index(index) => request.match_index(index),
             _ => request, // Post filters
         };
@@ -172,7 +177,7 @@ impl Handle {
         let mut stream = filtered.execute();
 
         let next = if let LinkFilter::Address(addr) = filter {
-            use packet::link::nlas::Nla;
+            use link::nlas::Nla;
 
             let mac_addr = parse_mac_address(addr)
                 .with_context(|| format!("Failed to parse MAC address: {}", addr))?;
@@ -220,7 +225,7 @@ impl Handle {
     async fn query_routes(
         &self,
         ip_version: Option<IpVersion>,
-    ) -> Result<Vec<packet::RouteMessage>> {
+    ) -> Result<Vec<route::RouteMessage>> {
         let list = if let Some(ip_version) = ip_version {
             self.handle
                 .route()
@@ -260,7 +265,7 @@ impl Handle {
 
         for msg in self.query_routes(None).await? {
             // Ignore non-main tables
-            if msg.header.table != packet::constants::RT_TABLE_MAIN {
+            if msg.header.table != RT_TABLE_MAIN {
                 continue;
             }
 
@@ -302,8 +307,8 @@ impl Handle {
     /// It can accept both a collection of routes or a single item (via `iter::once()`).
     /// It'll also take care of proper order when adding routes (gateways first, everything else after).
     async fn add_routes<I>(&mut self, list: I) -> Result<()>
-    where
-        I: IntoIterator<Item = Route>,
+        where
+            I: IntoIterator<Item=Route>,
     {
         // Split the list so we add routes with no gateway first.
         // Note: `partition_in_place` is a better fit here, since it reorders things inplace (instead of
@@ -314,23 +319,24 @@ impl Handle {
         for route in list {
             let link = self.find_link(LinkFilter::Name(&route.device)).await?;
 
-            const MAIN_TABLE: u8 = packet::constants::RT_TABLE_MAIN;
-            const UNICAST: u8 = packet::constants::RTN_UNICAST;
-            const BOOT_PROT: u8 = packet::constants::RTPROT_BOOT;
+            const MAIN_TABLE: u8 = RT_TABLE_MAIN;
+            const UNICAST: u8 = RTN_UNICAST;
+            const BOOT_PROT: u8 = RTPROT_BOOT;
 
             let scope = route.scope as u8;
 
-            use packet::nlas::route::Nla;
+            use route::Nla;
 
             // Build a common indeterminate ip request
             let request = self
                 .handle
                 .route()
                 .add()
-                .table(MAIN_TABLE)
+                .table_id(MAIN_TABLE as u32)
                 .kind(UNICAST)
                 .protocol(BOOT_PROT)
-                .scope(scope);
+                .scope(scope)
+                .flags(route::RouteFlags::from_bits_truncate(route.flags));
 
             // `rtnetlink` offers a separate request builders for different IP versions (IP v4 and v6).
             // This if branch is a bit clumsy because it does almost the same.
@@ -365,12 +371,12 @@ impl Handle {
                 }
 
                 if let Err(rtnetlink::Error::NetlinkError(message)) = request.execute().await {
-                    if Errno::from_i32(message.code.abs()) != Errno::EEXIST {
+                    if Errno::from_i32(i32::from(message.code.unwrap().abs())) != Errno::EEXIST {
                         return Err(anyhow!(
                             "Failed to add IP v6 route (src: {}, dst: {}, gtw: {},Err: {})",
-                            route.get_source(),
-                            route.get_dest(),
-                            route.get_gateway(),
+                            route.source,
+                            route.dest,
+                            route.gateway,
                             message
                         ));
                     }
@@ -406,12 +412,12 @@ impl Handle {
                 }
 
                 if let Err(rtnetlink::Error::NetlinkError(message)) = request.execute().await {
-                    if Errno::from_i32(message.code.abs()) != Errno::EEXIST {
+                    if Errno::from_i32(i32::from(message.code.unwrap().abs())) != Errno::EEXIST {
                         return Err(anyhow!(
                             "Failed to add IP v4 route (src: {}, dst: {}, gtw: {},Err: {})",
-                            route.get_source(),
-                            route.get_dest(),
-                            route.get_gateway(),
+                            route.source,
+                            route.dest,
+                            route.gateway,
                             message
                         ));
                     }
@@ -423,11 +429,11 @@ impl Handle {
     }
 
     async fn delete_routes<I>(&mut self, routes: I) -> Result<()>
-    where
-        I: IntoIterator<Item = packet::RouteMessage>,
+        where
+            I: IntoIterator<Item=route::RouteMessage>,
     {
         for route in routes.into_iter() {
-            if route.header.protocol == packet::constants::RTPROT_KERNEL {
+            if route.header.protocol == RTPROT_KERNEL {
                 continue;
             }
 
@@ -451,8 +457,8 @@ impl Handle {
     }
 
     async fn list_addresses<F>(&self, filter: F) -> Result<Vec<Address>>
-    where
-        F: Into<Option<AddressFilter>>,
+        where
+            F: Into<Option<AddressFilter>>,
     {
         let mut request = self.handle.address().get();
 
@@ -472,8 +478,8 @@ impl Handle {
     }
 
     async fn add_addresses<I>(&mut self, index: u32, list: I) -> Result<()>
-    where
-        I: IntoIterator<Item = IpNetwork>,
+        where
+            I: IntoIterator<Item=IpNetwork>,
     {
         for net in list.into_iter() {
             self.handle
@@ -488,8 +494,8 @@ impl Handle {
     }
 
     async fn delete_addresses<I>(&mut self, list: I) -> Result<()>
-    where
-        I: IntoIterator<Item = Address>,
+        where
+            I: IntoIterator<Item=Address>,
     {
         for addr in list.into_iter() {
             self.handle.address().del(addr.0).execute().await?;
@@ -499,8 +505,8 @@ impl Handle {
     }
 
     pub async fn add_arp_neighbors<I>(&mut self, list: I) -> Result<()>
-    where
-        I: IntoIterator<Item = ARPNeighbor>,
+        where
+            I: IntoIterator<Item=ARPNeighbor>,
     {
         for neigh in list.into_iter() {
             self.add_arp_neighbor(&neigh).await.map_err(|err| {
@@ -516,7 +522,6 @@ impl Handle {
     }
 
     /// Adds an ARP neighbor.
-    /// TODO: `rtnetlink` has no neighbours API, remove this after https://github.com/little-dude/netlink/pull/135
     async fn add_arp_neighbor(&mut self, neigh: &ARPNeighbor) -> Result<()> {
         let ip_address = neigh
             .toIPAddress
@@ -528,60 +533,24 @@ impl Handle {
         let ip = IpAddr::from_str(ip_address)
             .map_err(|e| anyhow!("Failed to parse IP {}: {:?}", ip_address, e))?;
 
-        // Import rtnetlink objects that make sense only for this function
-        use packet::constants::{
-            NDA_UNSPEC, NLM_F_ACK, NLM_F_CREATE, NLM_F_REPLACE, NLM_F_REQUEST,
-        };
-        use packet::neighbour::{NeighbourHeader, NeighbourMessage};
-        use packet::nlas::neighbour::Nla;
-        use packet::{NetlinkMessage, NetlinkPayload, RtnlMessage};
-        use rtnetlink::Error;
-
         const IFA_F_PERMANENT: u16 = 0x80; // See https://github.com/little-dude/netlink/blob/0185b2952505e271805902bf175fee6ea86c42b8/netlink-packet-route/src/rtnl/constants.rs#L770
 
         let link = self.find_link(LinkFilter::Name(&neigh.device)).await?;
 
-        let message = NeighbourMessage {
-            header: NeighbourHeader {
-                family: match ip {
-                    IpAddr::V4(_) => packet::AF_INET,
-                    IpAddr::V6(_) => packet::AF_INET6,
-                } as u8,
-                ifindex: link.index(),
-                state: if neigh.state != 0 {
-                    neigh.state as u16
-                } else {
-                    IFA_F_PERMANENT
-                },
-                flags: neigh.flags as u8,
-                ntype: NDA_UNSPEC as u8,
-            },
-            nlas: {
-                let mut nlas = vec![Nla::Destination(match ip {
-                    IpAddr::V4(v4) => v4.octets().to_vec(),
-                    IpAddr::V6(v6) => v6.octets().to_vec(),
-                })];
+        let mut request = self
+            .handle
+            .neighbours()
+            .add(link.index(), ip)
+            .state(if neigh.state != 0 { neigh.state as u16 } else { IFA_F_PERMANENT })
+            .flags(neigh.flags as u8)
+            .ntype(NDA_UNSPEC as u8);
 
-                if !neigh.lladdr.is_empty() {
-                    nlas.push(Nla::LinkLocalAddress(
-                        parse_mac_address(&neigh.lladdr)?.to_vec(),
-                    ));
-                }
-
-                nlas
-            },
-        };
-
-        // Send request and ACK
-        let mut req = NetlinkMessage::from(RtnlMessage::NewNeighbour(message));
-        req.header.flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE;
-
-        let mut response = self.handle.request(req)?;
-        while let Some(message) = response.next().await {
-            if let NetlinkPayload::Error(err) = message.payload {
-                return Err(anyhow!(Error::NetlinkError(err)));
-            }
+        if !neigh.lladdr.is_empty() {
+            request = request.link_local_address(parse_mac_address(&neigh.lladdr)?.as_slice());
         }
+
+        request.execute().await.
+            map_err(|err| anyhow!("Failed to add arp neighbor {}: {:?}", ip, err))?;
 
         Ok(())
     }
@@ -637,12 +606,12 @@ fn parse_mac_address(addr: &str) -> Result<[u8; 6]> {
 }
 
 /// Wraps external type with the local one, so we can implement various extensions and type conversions.
-struct Link(packet::LinkMessage);
+struct Link(LinkMessage);
 
 impl Link {
     /// If name.
     fn name(&self) -> String {
-        use packet::nlas::link::Nla;
+        use netlink_packet_route::nlas::link::Nla;
         self.nlas
             .iter()
             .find_map(|n| {
@@ -657,7 +626,7 @@ impl Link {
 
     /// Extract Mac address.
     fn address(&self) -> String {
-        use packet::nlas::link::Nla;
+        use netlink_packet_route::nlas::link::Nla;
         self.nlas
             .iter()
             .find_map(|n| {
@@ -672,7 +641,7 @@ impl Link {
 
     /// Returns whether the link is UP
     fn is_up(&self) -> bool {
-        self.header.flags & packet::rtnl::constants::IFF_UP > 0
+        self.header.flags & IFF_UP > 0
     }
 
     fn index(&self) -> u32 {
@@ -680,7 +649,7 @@ impl Link {
     }
 
     fn mtu(&self) -> Option<u64> {
-        use packet::nlas::link::Nla;
+        use netlink_packet_route::nlas::link::Nla;
         self.nlas.iter().find_map(|n| {
             if let Nla::Mtu(mtu) = n {
                 Some(*mtu as u64)
@@ -691,21 +660,21 @@ impl Link {
     }
 }
 
-impl From<packet::LinkMessage> for Link {
-    fn from(msg: packet::LinkMessage) -> Self {
+impl From<LinkMessage> for Link {
+    fn from(msg: LinkMessage) -> Self {
         Link(msg)
     }
 }
 
 impl Deref for Link {
-    type Target = packet::LinkMessage;
+    type Target = LinkMessage;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-struct Address(packet::AddressMessage);
+struct Address(AddressMessage);
 
 impl TryFrom<Address> for IPAddress {
     type Error = anyhow::Error;
@@ -735,7 +704,7 @@ impl TryFrom<Address> for IPAddress {
 
 impl Address {
     fn is_ipv6(&self) -> bool {
-        self.0.header.family == packet::constants::AF_INET6 as u8
+        self.0.header.family == AF_INET6 as u8
     }
 
     #[allow(dead_code)]
@@ -744,7 +713,7 @@ impl Address {
     }
 
     fn address(&self) -> String {
-        use packet::nlas::address::Nla;
+        use netlink_packet_route::nlas::address::Nla;
         self.0
             .nlas
             .iter()
@@ -759,7 +728,7 @@ impl Address {
     }
 
     fn local(&self) -> String {
-        use packet::nlas::address::Nla;
+        use netlink_packet_route::nlas::address::Nla;
         self.0
             .nlas
             .iter()
@@ -777,9 +746,9 @@ impl Address {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rtnetlink::packet;
     use std::iter;
     use std::process::Command;
+    use netlink_packet_route::{AddressHeader, LinkHeader};
     use test_utils::skip_if_not_root;
 
     #[tokio::test]
@@ -790,7 +759,7 @@ mod tests {
             .await
             .expect("Loopback not found");
 
-        assert_ne!(message.header, packet::LinkHeader::default());
+        assert_ne!(message.header, LinkHeader::default());
         assert_eq!(message.name(), "lo");
     }
 
@@ -865,7 +834,7 @@ mod tests {
 
         assert_ne!(list.len(), 0);
         for addr in &list {
-            assert_ne!(addr.0.header, packet::AddressHeader::default());
+            assert_ne!(addr.0.header, AddressHeader::default());
         }
     }
 

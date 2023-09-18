@@ -811,8 +811,9 @@ dependencies = [
  "libc",
  "log",
  "logging",
- "netlink-packet-utils",
- "netlink-sys",
+ "netlink-packet-route",
+ "netlink-packet-utils 0.4.1",
+ "netlink-sys 0.7.0",
  "nix 0.24.2",
  "oci",
  "opentelemetry",
@@ -1002,28 +1003,26 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "netlink-packet-core"
-version = "0.2.4"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac48279d5062bdf175bdbcb6b58ff1d6b0ecd54b951f7a0ff4bc0550fe903ccb"
+checksum = "72724faf704479d67b388da142b186f916188505e7e0b26719019c525882eda4"
 dependencies = [
  "anyhow",
  "byteorder",
- "libc",
- "netlink-packet-utils",
+ "netlink-packet-utils 0.5.2",
 ]
 
 [[package]]
 name = "netlink-packet-route"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76aed5d3b6e3929713bf1e1334a11fd65180b6d9f5d7c8572664c48b122604f8"
+version = "0.17.1"
+source = "git+https://github.com/liuxu623/netlink-packet-route.git#87a6bdeda95239b4bf2bb5c535187234e65968c2"
 dependencies = [
  "anyhow",
  "bitflags",
  "byteorder",
  "libc",
  "netlink-packet-core",
- "netlink-packet-utils",
+ "netlink-packet-utils 0.5.2",
 ]
 
 [[package]]
@@ -1039,18 +1038,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "netlink-proto"
-version = "0.7.0"
+name = "netlink-packet-utils"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd06e90449ae973fe3888c1ff85949604ef5189b4ac9a2ae39518da1e00762d"
+checksum = "0ede8a08c71ad5a95cdd0e4e52facd37190977039a4704eb82a283f713747d34"
+dependencies = [
+ "anyhow",
+ "byteorder",
+ "paste",
+ "thiserror",
+]
+
+[[package]]
+name = "netlink-proto"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "842c6770fc4bb33dd902f41829c61ef872b8e38de1405aa0b938b27b8fba12c3"
 dependencies = [
  "bytes 1.1.0",
  "futures",
  "log",
  "netlink-packet-core",
- "netlink-sys",
+ "netlink-sys 0.8.5",
+ "thiserror",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -1066,16 +1077,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "nix"
-version = "0.22.3"
+name = "netlink-sys"
+version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4916f159ed8e5de0082076562152a76b7a1f64a01fd9d1e0fea002c37624faf"
+checksum = "6471bf08e7ac0135876a9581bf3217ef0333c191c128d34878079f42ee150411"
 dependencies = [
- "bitflags",
- "cc",
- "cfg-if 1.0.0",
+ "bytes 1.1.0",
+ "futures",
  "libc",
- "memoffset",
+ "log",
+ "tokio",
 ]
 
 [[package]]
@@ -1110,6 +1121,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f346ff70e7dbfd675fe90590b92d59ef2de15a8779ae305ebcbfd3f0caf59be4"
 dependencies = [
  "autocfg",
+ "bitflags",
+ "cfg-if 1.0.0",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
+dependencies = [
  "bitflags",
  "cfg-if 1.0.0",
  "libc",
@@ -1671,15 +1693,17 @@ dependencies = [
 
 [[package]]
 name = "rtnetlink"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c9a6200d18ec1acfc218ce71363dcc9b6075f399220f903fdfeacd476a876ef"
+version = "0.13.1"
+source = "git+https://github.com/liuxu623/rtnetlink.git#be4ab79951492e448f81203f738caf2ca1823e21"
 dependencies = [
  "futures",
  "log",
+ "netlink-packet-core",
  "netlink-packet-route",
+ "netlink-packet-utils 0.5.2",
  "netlink-proto",
- "nix 0.22.3",
+ "netlink-sys 0.8.5",
+ "nix 0.26.4",
  "thiserror",
  "tokio",
 ]
@@ -2095,20 +2119,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df54d54117d6fdc4e4fea40fe1e4e566b3505700e148a6827e59b34b0d2600d9"
 dependencies = [
  "futures-core",
- "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "tokio-util"
-version = "0.6.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36943ee01a6d67977dd3f84a5a1d2efeb4ada3a1ae771cadfaa535d9d9fc6507"
-dependencies = [
- "bytes 1.1.0",
- "futures-core",
- "futures-sink",
- "log",
  "pin-project-lite",
  "tokio",
 ]

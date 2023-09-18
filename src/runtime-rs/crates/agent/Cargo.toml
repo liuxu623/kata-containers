@@ -21,6 +21,8 @@ ttrpc = { version = "0.6.1" }
 tokio = { version = "1.28.1", features = ["fs", "rt"] }
 url = "2.2.2"
 nix = "0.24.2"
+netlink-packet-route = { git = "https://github.com/liuxu623/netlink-packet-route.git" }
+
 
 kata-types = { path = "../../../libs/kata-types"}
 logging = { path = "../../../libs/logging"}

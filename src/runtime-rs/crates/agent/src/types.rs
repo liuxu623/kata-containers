@@ -110,6 +110,7 @@ pub struct Route {
     pub source: String,
     pub scope: u32,
     pub family: IPFamily,
+    pub flags: u32,
 }
 
 #[derive(Deserialize, Debug, PartialEq, Clone, Default)]

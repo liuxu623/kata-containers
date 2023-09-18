@@ -235,6 +235,7 @@ impl From<Route> for types::Route {
             family: from.family.into(),
             unknown_fields: Default::default(),
             cached_size: Default::default(),
+            flags: from.flags,
         }
     }
 }
@@ -248,6 +249,7 @@ impl From<types::Route> for Route {
             source: src.source,
             scope: src.scope,
             family: src.family.into(),
+            flags: src.flags,
         }
     }
 }
