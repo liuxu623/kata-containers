@@ -74,6 +74,7 @@ impl NetworkInfoFromDan {
                     source: route.source.clone(),
                     scope: route.scope,
                     family,
+                    flags: 0,
                 })
             })
             .collect();
@@ -194,6 +195,7 @@ mod tests {
             source: "172.18.0.1".to_owned(),
             scope: 0,
             family: IPFamily::V4,
+            flags: 0,
         }];
         assert_eq!(routes, network_info.routes().await.unwrap());
 

@@ -215,6 +215,7 @@ impl From<Route> for types::Route {
             source: from.source,
             scope: from.scope,
             family: protobuf::EnumOrUnknown::new(from.family.into()),
+            flags: from.flags,
             ..Default::default()
         }
     }
@@ -229,6 +230,7 @@ impl From<types::Route> for Route {
             source: src.source,
             scope: src.scope,
             family: src.family.unwrap().into(),
+            flags: src.flags,
         }
     }
 }

@@ -179,6 +179,7 @@ fn generate_route(name: &str, route: &RouteMessage) -> Result<Option<Route>> {
         } else {
             IPFamily::V6
         },
+        flags: route.header.flags.bits(),
     }))
 }
 

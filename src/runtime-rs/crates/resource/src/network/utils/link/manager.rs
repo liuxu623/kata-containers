@@ -149,12 +149,12 @@ fn link_info(mut infos: Vec<Info>) -> Box<dyn Link> {
                     link = Some(Box::new(Device::default()));
                 }
             },
-            Info::SlaveKind(_sk) => {
+            Info::PortKind(_sk) => {
                 if link.is_none() {
                     link = Some(Box::new(Device::default()));
                 }
             }
-            Info::SlaveData(_sd) => {
+            Info::PortData(_sd) => {
                 link = Some(Box::new(Device::default()));
             }
             _ => {

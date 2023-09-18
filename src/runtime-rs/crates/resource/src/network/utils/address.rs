@@ -29,7 +29,7 @@ pub struct Address {
 impl TryFrom<AddressMessage> for Address {
     type Error = anyhow::Error;
     fn try_from(msg: AddressMessage) -> Result<Self> {
-        let AddressMessage { header, nlas } = msg;
+        let AddressMessage { header, nlas, .. } = msg;
         let mut addr = Address {
             addr: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
             peer: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
